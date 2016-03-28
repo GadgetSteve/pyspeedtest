@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+"""
+Python script to test network bandwidth using Speedtest.net servers
 
+"""
 from __future__ import print_function
 
 import argparse
@@ -28,14 +31,14 @@ except ImportError:
 
 __program__ = 'pyspeedtest'
 __script__ = os.path.basename(sys.argv[0])
-__version__ = '1.2.5'
+__version__ = '1.2.6a'
 __description__ = 'Test your bandwidth speed using Speedtest.net servers.'
 
-__supported_formats__ = ('default', 'json', 'xml')
+__supported_formats__ = ('default', 'json', 'xml', 'quiet')
 
 
 class SpeedTest(object):
-
+    """ Class to perform actual speed tests."""
     DOWNLOAD_FILES = [
         '/speedtest/random350x350.jpg',
         '/speedtest/random500x500.jpg',
@@ -56,15 +59,18 @@ class SpeedTest(object):
 
     @property
     def host(self):
+        """ Getter for the server to use."""
         if not self._host:
             self._host = self.chooseserver()
         return self._host
 
     @host.setter
     def host(self, new_host):
+        """ Used to specify a given server."""
         self._host = new_host
 
     def connect(self, url):
+        """ Make connection."""
         try:
             connection = HTTPConnection(url)
             connection.set_debuglevel(self.http_debug)
@@ -73,13 +79,16 @@ class SpeedTest(object):
         except:
             raise Exception("Error connecting to '%s'" % url)
 
-    def downloadthread(self, connection, url):
+    @staticmethod
+    def downloadthread(connection, url):
+        """ Perform a single download."""
         connection.request('GET', url, None, {'Connection': 'Keep-Alive'})
         response = connection.getresponse()
         self_thread = currentThread()
         self_thread.downloaded = len(response.read())
 
     def download(self):
+        """ Perform multiple downloads in threads."""
         total_downloaded = 0
         connections = []
         for run in range(self.runs):
@@ -107,7 +116,9 @@ class SpeedTest(object):
                      total_ms, total_downloaded)
         return total_downloaded * 8000 / total_ms
 
-    def uploadthread(self, connection, data):
+    @staticmethod
+    def uploadthread(connection, data):
+        """ Perform a single upload."""
         url = '/speedtest/upload.php?x=%s' % random.random()
         connection.request('POST', url, data, {
             'Connection': 'Keep-Alive',
@@ -119,6 +130,7 @@ class SpeedTest(object):
         self_thread.uploaded = int(reply.split('=')[1])
 
     def upload(self):
+        """ Perform multiple uploads in threads."""
         connections = []
         for run in range(self.runs):
             connections.append(self.connect(self.host))
@@ -154,6 +166,7 @@ class SpeedTest(object):
         return total_uploaded * 8000 / total_ms
 
     def ping(self, server=None):
+        """ Perform a single ping test."""
         if not server:
             server = self.host
 
@@ -179,7 +192,19 @@ class SpeedTest(object):
         logging.info('Latency for %s - %d', server, total_ms)
         return total_ms
 
+    @staticmethod
+    def calc_distance(location, server):
+        """ Calculate the approximate distance between the location and server."""
+        my_lat = float(location[1])
+        my_lon = float(location[2])
+        s_lat = float(server[1])
+        s_lon = float(server[2])
+        # note that the calculation below does not use the haversine calculation
+        distance = sqrt(pow(s_lat - my_lat, 2) + pow(s_lon - my_lon, 2))
+        return distance
+
     def chooseserver(self):
+        """ Pick which server to use."""
         connection = self.connect('www.speedtest.net')
         now = int(time() * 1000)
         extra_headers = {
@@ -206,13 +231,15 @@ class SpeedTest(object):
         reply = response.read().decode('utf-8')
         server_list = re.findall(
             r'<server url="([^"]*)" lat="([^"]*)" lon="([^"]*)"', reply)
-        my_lat = float(location[1])
-        my_lon = float(location[2])
+        #my_lat = float(location[1])
+        #my_lon = float(location[2])
         sorted_server_list = []
         for server in server_list:
-            s_lat = float(server[1])
-            s_lon = float(server[2])
-            distance = sqrt(pow(s_lat - my_lat, 2) + pow(s_lon - my_lon, 2))
+            #s_lat = float(server[1])
+            #s_lon = float(server[2])
+            # note that the calculation below does not use the haversine calculation
+            #distance = sqrt(pow(s_lat - my_lat, 2) + pow(s_lon - my_lon, 2))
+            distance = self.calc_distance(location, server)
             bisect.insort_left(sorted_server_list, (distance, server[0]))
         best_server = (999999, '')
         for server in sorted_server_list[:10]:
@@ -232,9 +259,9 @@ class SpeedTest(object):
 
 
 def parseargs(args):
-
+    """ Parse the arguments."""
     class SmartFormatter(argparse.HelpFormatter):
-
+        """ Formatter class."""
         def _split_lines(self, text, width):
             """argparse.RawTextHelpFormatter._split_lines"""
             if text.startswith('r|'):
@@ -242,6 +269,7 @@ def parseargs(args):
             return argparse.HelpFormatter._split_lines(self, text, width)
 
     def positive_int(value):
+        """ Safely parse a value as a positive argument."""
         try:
             ivalue = int(value)
             if ivalue < 0:
@@ -252,6 +280,7 @@ def parseargs(args):
                 "invalid positive int value: '%s'" % value)
 
     def format_enum(value):
+        """ Check/Get the format parameter."""
         if value.lower() not in __supported_formats__:
             raise argparse.ArgumentTypeError(
                 "output format not supported: '%s'" % value)
@@ -310,65 +339,75 @@ def parseargs(args):
 
     return parser.parse_args(args)
 
+def output_results(opts, stats):
+    """ Output the results in the required format."""
+    if opts.format == 'default':
+        print('Using server: %s' % stats['server'])
+        if stats.has_key('ping'):
+            print('Ping: %d ms' % stats['ping'])
+        for item in ['download', 'upload']:
+            if stats.has_key(item):
+                print('%s speed: %s' % (item.capitalize(),
+                                        pretty_speed(stats[item])))
 
-def perform_speedtest(opts):
+    elif opts.format == 'json':
+        from json import dumps
+        print(dumps(stats))
+
+    elif opts.format == 'xml':
+        from xml.etree.ElementTree import Element, tostring
+        xml = Element('data')
+        for key, val in stats.items():
+            child = Element(key)
+            child.text = str(val)
+            xml.append(child)
+        print(tostring(xml).decode('utf-8'))
+
+    else:  # quiet = no output
+        pass
+
+def perform_speedtest(opts=None):
+    """ Perfomr the speed test in accordance with the options """
+    if opts is None:  # Called without arguments
+        opts = parseargs(None)  # Just use the defaults
     speedtest = SpeedTest(opts.server, opts.debug, opts.runs)
 
     if opts.format in __supported_formats__:
-
-        if opts.format == 'default':
-
-            print('Using server: %s' % speedtest.host)
-
-            if opts.mode & 4 == 4:
-                print('Ping: %d ms' % speedtest.ping())
-
-            if opts.mode & 1 == 1:
-                print('Download speed: %s' % pretty_speed(speedtest.download()))
-
-            if opts.mode & 2 == 2:
-                print('Upload speed: %s' % pretty_speed(speedtest.upload()))
-
-        else:
-            stats = dict(server=speedtest.host)
-            if opts.mode & 4 == 4:
-                stats['ping'] = speedtest.ping()
-            if opts.mode & 1 == 1:
-                stats['download'] = speedtest.download()
-            if opts.mode & 2 == 2:
-                stats['upload'] = speedtest.upload()
-            if opts.format == 'json':
-                from json import dumps
-                print(dumps(stats))
-            elif opts.format == 'xml':
-                from xml.etree.ElementTree import Element, tostring
-                xml = Element('data')
-                for key, val in stats.items():
-                    child = Element(key)
-                    child.text = str(val)
-                    xml.append(child)
-                print(tostring(xml).decode('utf-8'))
+        stats = dict(server=speedtest.host)
+        # Generate the statistics dictionary whatever happens
+        if opts.mode & 4 == 4:
+            stats['ping'] = speedtest.ping()
+        if opts.mode & 1 == 1:
+            stats['download'] = speedtest.download()
+        if opts.mode & 2 == 2:
+            stats['upload'] = speedtest.upload()
+        # Output the results
+        output_results(opts, stats)
 
     else:
         raise Exception('Output format not supported: %s' % opts.format)
 
+    return stats # Return value to allow usage within python scripts
+
 
 def main(args=None):
+    """ The top level program."""
     opts = parseargs(args)
     logging.basicConfig(
         format='%(message)s',
         level=logging.INFO if opts.verbose else logging.WARNING)
     try:
         perform_speedtest(opts)
-    except Exception as e:
+    except Exception as err:
         if opts.verbose:
-            logging.exception(e)
+            logging.exception(err)
         else:
-            logging.error(e)
+            logging.error(err)
 
 
 def pretty_speed(speed):
-    units = ['bps', 'Kbps', 'Mbps', 'Gbps']
+    """ Format the speed in nice human readable form."""
+    units = ['bps', 'Kbps', 'Mbps', 'Gbps', 'Tbps'] # The last is unlikely
     unit = 0
     while speed >= 1024:
         speed /= 1024
