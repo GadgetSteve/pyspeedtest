@@ -370,19 +370,30 @@ def perform_speedtest(opts=None):
     """ Perfomr the speed test in accordance with the options """
     if opts is None:  # Called without arguments
         opts = parseargs(None)  # Just use the defaults
-    speedtest = SpeedTest(opts.server, opts.debug, opts.runs)
+    show_progress = opts.format == 'default'
+    stats = {'server': 'None - no valid format',}
 
     if opts.format in __supported_formats__:
-        stats = dict(server=speedtest.host)
-        # Generate the statistics dictionary whatever happens
-        if opts.mode & 4 == 4:
-            stats['ping'] = speedtest.ping()
-        if opts.mode & 1 == 1:
-            stats['download'] = speedtest.download()
-        if opts.mode & 2 == 2:
-            stats['upload'] = speedtest.upload()
+        speedtest = SpeedTest(opts.server, opts.debug, opts.runs)
+        methods = [(4, 'ping', speedtest.ping, float, ': %.1d msec'),
+                   (1, 'download', speedtest.download, pretty_speed, ' speed: %s'),
+                   (2, 'upload', speedtest.upload, pretty_speed, ' speed: %s')]
+        stats['server'] = speedtest.host
+        if show_progress:
+            print('Using server: %s' % stats['server'])
+
+        for mask, name, method, conv, fmt in methods:
+            if opts.mode & mask == mask:
+                if show_progress:
+                    print('%s' % name.capitalize(), end='')
+                val = method()
+                stats[name] = val
+                if show_progress:
+                    print(fmt % conv(val))
+
         # Output the results
-        output_results(opts, stats)
+        if not show_progress:
+            output_results(opts, stats)
 
     else:
         raise Exception('Output format not supported: %s' % opts.format)
